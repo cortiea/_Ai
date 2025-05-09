@@ -207,3 +207,179 @@ Version: 3.1 - 3.1.2 (Final Waterfall + Retry Refinement + Fixes)
 - Fixed final `'unbalanced parentheses'` error pointing at `OnInit` by reformatting/simplifying the indicator initialization block within `OnInit` (v3.1.2).
 
 ========================================================================
+
+//--------------------------------------------------------------------
+// Version 3.4.4 (Current - Based on last request)
+// Date: 2025-05-09
+//--------------------------------------------------------------------
+// - Feature: Individual Hedging for Subsequent Counter Grid Orders.
+//   - If a Counter Grid (Buy or Sell) has already placed its initial overall hedge
+//     (i.e., `isCounterBuyGridSelfHedged` or `isCounterSellGridSelfHedged` is true),
+//     any NEW grid orders added to THAT Counter Grid will now also be individually
+//     hedged with an opposing order of the same lot size, using `counterGridHedgeMagicNumber`.
+//   - Added new function `OpenIndividualCounterOrderHedge()` to handle this.
+// - Feature: Conditional Equity Trailing P/L Source.
+//   - Modified `CheckExitConditions()`:
+//     - If `isCounterBuyGridSelfHedged` OR `isCounterSellGridSelfHedged` is true,
+//       the `currentFloatingEquity` for the Equity Trailing Stop is calculated
+//       based ONLY on the Profit/Loss of the Main Grid (`MagicNumber`).
+//     - Otherwise (if neither counter grid has self-hedged yet), the
+//       `currentFloatingEquity` is based on the combined P/L of the
+//       Main Grid (`MagicNumber`) AND the Counter Grid (`counterMagicNumber`).
+//     - P/L from orders with `counterGridHedgeMagicNumber` (hedges for the counter grid)
+//       is NOT included in the `currentFloatingEquity` for trailing stop decisions.
+// - State Management:
+//   - Added `isCounterBuyGridSelfHedged` and `isCounterSellGridSelfHedged` global boolean flags.
+//   - These flags are initialized in `OnInit()`, saved/loaded via `SaveTrailingState()`/`LoadTrailingState()`.
+//   - These flags are set in `OpenHedgeForCounterGrid()` when the initial overall hedge is placed.
+//   - These flags are reset in `CheckAndResetGridState()` when the corresponding counter grid is fully closed.
+// - `ManageGrid()`: Logic updated to call `OpenIndividualCounterOrderHedge()` if the parent Counter Grid is already self-hedged,
+//   or call `OpenHedgeForCounterGrid()` if the Counter Grid reaches `MaxGridLevelBeforeClose` for the first time.
+
+//--------------------------------------------------------------------
+// Version 3.4.3
+//--------------------------------------------------------------------
+// - Feature: Added Hedging for the Counter Grid when it reaches MaxGridLevelBeforeClose.
+//   - When a Counter Grid (Buy or Sell) independently reaches `MaxGridLevelBeforeClose`,
+//     it will place a single hedge order (opposite direction) for the *entire sum of lots*
+//     of that Counter Grid. This hedge uses a new `counterGridHedgeMagicNumber`.
+//   - This action does NOT close any other positions or stop the Main Grid.
+// - New Globals: `counterGridHedgeMagicNumber` and `CTrade counterGridHedgeTrade`.
+// - New Function: `OpenHedgeForCounterGrid()` to implement the above hedging logic.
+// - `ManageGrid()`: Updated to call `OpenHedgeForCounterGrid()` when a counter grid
+//   (Counter Buy or Counter Sell) reaches `MaxGridLevelBeforeClose`.
+// - `CloseAllPositionsOfType()`: Updated to handle closing orders with `counterGridHedgeMagicNumber`.
+// - `HandlePendingClosures()` & `CheckExitConditions()`: Updated to ensure positions with
+//   `counterGridHedgeMagicNumber` are closed during system-wide closures.
+// - `CheckAndResetGridState()`: Updated to consider `counterGridHedgeMagicNumber` positions
+//   when determining if all positions are closed for resetting `isEquityTrailingActive`.
+
+//--------------------------------------------------------------------
+// Version 3.4.2
+//--------------------------------------------------------------------
+// - Feature: `MaxGridLevelBeforeClose` now also applies to the Counter Grid's independent growth.
+//   - If the Counter Buy Grid OR Counter Sell Grid reaches `MaxGridLevelBeforeClose`
+//     due to its own grid additions, ALL positions (Main, Counter) will be closed.
+// - `ManageGrid()`: Added checks for `counterBuyGridCount` and `counterSellGridCount`
+//   against `MaxGridLevelBeforeClose` in the sections managing independent counter grid growth.
+//   If met, it triggers closure of all Main and Counter grid positions.
+
+//--------------------------------------------------------------------
+// Version 3.4.1
+//--------------------------------------------------------------------
+// - Feature: Equity Trailing Stop now considers the combined P/L of Main Grid AND Counter Grid.
+// - `CheckExitConditions()`: Modified the calculation of `currentFloatingEquity` to sum
+//   the P/L from orders with `MagicNumber` and `counterMagicNumber`.
+// - Added logging in `CheckExitConditions` for Main, Counter, and Total Combined P/L.
+
+//--------------------------------------------------------------------
+// Version 3.4.0
+//--------------------------------------------------------------------
+// - Feature: Implemented an Independent Counter Grid.
+//   - When any Main Grid order (initial or subsequent grid level) is opened, an opposing
+//     Counter Grid order of the same lot size is immediately opened using `counterMagicNumber` (MagicNumber + 1).
+//   - The Counter Grid can also add its own grid levels independently if the price moves
+//     against its direction by ATR distance, using `LotCoefficient`.
+// - New Globals: `counterMagicNumber`, `CTrade counterTrade`, and state variables for the counter grid
+//   (`lastCounterBuyPrice`, `lastCounterSellPrice`, `lastCounterBuyLot`, `lastCounterSellLot`,
+//   `counterBuyGridCount`, `counterSellGridCount`).
+// - `OnInit()`: Initializes `counterMagicNumber` and `counterTrade`.
+// - `CheckEntryConditions()`: Opens initial counter trade alongside initial main trade.
+// - `ManageGrid()`: Significantly expanded to:
+//   - Open counter orders when main grid orders are placed.
+//   - Manage independent grid additions for the counter grid.
+// - Helper Functions (`PositionsTotalFiltered`, `CalculateFloatingEquity`, `CloseAllPositionsOfType`):
+//   Parameterised to accept a `magicNum` argument.
+// - `CheckExitConditions()`: Equity Trailing Stop logic continues to operate ONLY on Main Grid P/L.
+//   When Main Grid exit is triggered, ALL positions (Main and Counter) are closed.
+// - `MaxGridLevelBeforeClose` (Main Grid): If Main Grid hits this level, ALL positions (Main and Counter) are closed.
+// - `CheckAndResetGridState()`: Made more complex to handle state resets for Main and Counter grids independently.
+
+//--------------------------------------------------------------------
+// Version 3.3.0
+//--------------------------------------------------------------------
+// - Feature: Replaced EMA Waterfall and previous Equity TP with a new Equity Trailing Stop mechanism.
+//   - `EquityTakeProfit` input renamed to `EquityTrailingStep`.
+//   - `WaterfallMinProfit` input removed.
+// - New Trailing Logic:
+//   - Activates when total floating equity (Main Grid only) reaches `EquityTrailingStep * 2.0`.
+//   - Initially locks profit at `EquityTrailingStep * 1.0`.
+//   - If equity drops to the locked level, all Main Grid positions close.
+//   - Stop level steps up by `EquityTrailingStep` for each `EquityTrailingStep` new equity high.
+// - New Globals: `isEquityTrailingActive`, `equityTrailStopLevel`, `highestEquitySinceTrailActivated`, `stateNeedsSaving`.
+// - New Functions: `SaveTrailingState()`, `LoadTrailingState()` for persistence.
+// - `CheckExitConditions()`: Rewritten to implement the new trailing logic.
+// - `OnInit()`: Calls `LoadTrailingState()`. Removed waterfall flag resets.
+// - `OnDeinit()`: Calls `SaveTrailingState()`.
+// - `CheckAndResetGridState()`: Resets new trailing state variables when all Main Grid positions close.
+// - Removed EMA Waterfall functions and related global variables.
+
+//--------------------------------------------------------------------
+// Version 3.2.4
+//--------------------------------------------------------------------
+// - Feature: Changed behavior at `MaxGridLevelBeforeHedge`. Instead of hedging,
+//   the EA now closes ALL open positions (Main Grid Buys and Sells).
+// - `MaxGridLevelBeforeHedge` input renamed to `MaxGridLevelBeforeClose` for clarity.
+// - `ManageGrid()`: Modified to call `CloseAllPositionsOfType()` for both BUY and SELL
+//   when `buyGridCount` or `sellGridCount` reaches `MaxGridLevelBeforeClose`.
+// - Removed Hedging Code:
+//   - Deleted global variables `isBuyHedged`, `isSellHedged`.
+//   - Deleted `OpenHedgeOrder()` function.
+//   - Simplified `CloseAllPositionsOfType()` by removing logic for closing specific hedge orders.
+//   - Simplified `CheckAndResetGridState()` by removing hedge flag resets.
+
+//--------------------------------------------------------------------
+// Version 3.2.3
+//--------------------------------------------------------------------
+// - Bug Fix: Corrected EMA Waterfall exit logic for the EMA200 level.
+//   - The `WaterfallMinProfit` check is now correctly applied when price reaches
+//     EMA200, similar to EMA9/20/50, if the corresponding `waitFor...Ema200` flag is set.
+//     Previously, it would close at EMA200 regardless of profit.
+// - `CheckExitConditions()`: Modified the EMA200 condition blocks for both Buy and Sell
+//   waterfall exits to include the `currentFloatingEquity >= WaterfallMinProfit` check.
+
+//--------------------------------------------------------------------
+// Version 3.2.2
+//--------------------------------------------------------------------
+// - Feature: Prevented further Main Grid orders after its hedge was activated.
+// - New Globals: `isBuyHedged`, `isSellHedged` (boolean flags).
+// - `OpenHedgeOrder()`: Sets the corresponding `isBuyHedged` or `isSellHedged` to true.
+// - `ManageGrid()`: Added checks `!isBuyHedged` and `!isSellHedged` to conditions
+//   for adding new Main Grid Buy and Sell orders, respectively.
+// - `CheckAndResetGridState()`: Resets `isBuyHedged`/`isSellHedged` to false when
+//   the corresponding Main Grid side (Buys or Sells) is fully closed.
+
+//--------------------------------------------------------------------
+// Version 3.2.1
+//--------------------------------------------------------------------
+// - Bug Fix: Corrected `OnInit` syntax errors.
+//   - Added missing `InpDeviation` input parameter.
+//   - Changed incorrect `iMAOnArray` call for `volumeMaHandle` back to the correct
+//     `iMA(_Symbol, _Period, VolumeMAPeriod, 0, MODE_SMA, volumeHandle)`.
+//   - Fixed a mismatched brace at the end of `OnInit`.
+
+//--------------------------------------------------------------------
+// Version 3.2.0
+//--------------------------------------------------------------------
+// - Feature: Added Level 5 Hedge for the Main Grid.
+//   - When the 5th Main Grid order (Buy or Sell) is opened, an opposing hedge order
+//     is placed. Lot size of hedge = total lots of the 5 Main Grid orders.
+//   - Input `MaxGridLevelBeforeHedge` controls this level (default 5).
+// - New Functions: `CalculateTotalLotsOfType()`, `OpenHedgeOrder()`.
+// - `ManageGrid()`: Calls `OpenHedgeOrder()` when `buyGridCount` or `sellGridCount`
+//   reaches `MaxGridLevelBeforeHedge`.
+// - `CloseAllPositionsOfType()`: Modified to also find and close the corresponding
+//   hedge order (identified by comment) when the main grid it was hedging is closed.
+
+//--------------------------------------------------------------------
+// Version 3.1.2 (Initial version provided by user for analysis)
+//--------------------------------------------------------------------
+// - Base EA: Grid trading strategy.
+// - Entry: Based on price relation to EMAs (9, 20, 50, 200) and Volume > Volume MA.
+// - Grid: Adds levels at ATR-defined distances with `LotCoefficient`.
+// - Exits:
+//   1. Dynamic Equity Take Profit (per order).
+//   2. EMA Waterfall Exit with `WaterfallMinProfit` check.
+// - Filters: Spread, Hourly, Friday.
+//--------------------------------------------------------------------
+
